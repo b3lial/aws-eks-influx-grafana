@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: nginx-app
+spec:
+  replicas: 1
+  selector:
+    app: nginx-app
+  template:
+    metadata:
+      name: nginx-app
+      labels:
+        app: nginx-app
+    spec:
+      containers:
+      - name: nginx-app
+        image: nginx
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  type: NodePort
+  selector:
+    app: nginx-app
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/subnets: phobosys-2-eks-stack-PublicSubnet01, phobosys-2-eks-stack-PublicSubnet02, phobosys-2-eks-stack-PrivateSubnet01
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-central-1:your-certificate-here
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: nginx-service
+              port:
+                number: 80

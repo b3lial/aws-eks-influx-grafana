@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: influxdb-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/subnets: phobosys-2-eks-stack-PublicSubnet01, phobosys-2-eks-stack-PublicSubnet02, phobosys-2-eks-stack-PrivateSubnet01
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:eu-central-1:your-certificate-here, arn:aws:acm:eu-central-1:your-second-certificate-here
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/group.name: iot-example
+spec:
+  ingressClassName: alb
+  rules:
+  - host: grafana.your-domain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana-service
+            port:
+              number: 3000
+  - host: influxdb.your-domain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: influxdb-service
+            port:
+              number: 8086

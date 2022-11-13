@@ -1,0 +1,337 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'PhoboSys EKS Cluster including Roles and VPC'
+
+Parameters:
+
+  EksInstanceType:
+    Type: String
+    Default: t2.medium
+    Description: EC2 Worker nodes instance type
+
+  VpcBlock:
+    Type: String
+    Default: 192.168.0.0/16
+    Description: The CIDR range for the VPC. This should be a valid private (RFC 1918) CIDR range.
+
+  PublicSubnet01Block:
+    Type: String
+    Default: 192.168.0.0/18
+    Description: CidrBlock for public subnet 01 within the VPC
+
+  PublicSubnet02Block:
+    Type: String
+    Default: 192.168.64.0/18
+    Description: CidrBlock for public subnet 02 within the VPC
+
+  PrivateSubnet01Block:
+    Type: String
+    Default: 192.168.128.0/18
+    Description: CidrBlock for private subnet 01 within the VPC
+
+  KubernetesVersion:
+    Type: String
+    AllowedValues: [ "1.23", "1.22", "1.21", "1.20" ]
+    Default: "1.23"
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Worker Network Configuration"
+        Parameters:
+          - VpcBlock
+          - PublicSubnet01Block
+          - PublicSubnet02Block
+          - PrivateSubnet01Block
+
+Resources:
+
+#######################
+#         VPC         #
+#######################
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:  !Ref VpcBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-VPC'
+      - Key: unit
+        Value: phobosys-2
+
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-InternetGateway'
+
+  VPCGatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: Public Subnets
+      - Key: Network
+        Value: Public
+      - Key: unit
+        Value: phobosys-2
+
+  PrivateRouteTable01:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: Private Subnets
+      - Key: Network
+        Value: Private01
+      - Key: unit
+        Value: phobosys-2
+
+  PublicRoute:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PrivateRoute01:
+    DependsOn:
+    - VPCGatewayAttachment
+    - NatGateway01
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable01
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway01
+
+  NatGateway01:
+    DependsOn:
+    - NatGatewayEIP1
+    - PublicSubnet01
+    - VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt 'NatGatewayEIP1.AllocationId'
+      SubnetId: !Ref PublicSubnet01
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-NatGatewayAZ1'
+      - Key: unit
+        Value: phobosys-2
+
+  NatGatewayEIP1:
+    DependsOn:
+    - VPCGatewayAttachment
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+
+  PublicSubnet01:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      Comment: Subnet 01
+    Properties:
+      MapPublicIpOnLaunch: true
+      AvailabilityZone:
+        Fn::Select:
+        - '0'
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      CidrBlock:
+        Ref: PublicSubnet01Block
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-PublicSubnet01"
+      - Key: kubernetes.io/role/elb
+        Value: 1
+      - Key: unit
+        Value: phobosys-2
+
+  PublicSubnet02:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      Comment: Subnet 02
+    Properties:
+      MapPublicIpOnLaunch: true
+      AvailabilityZone:
+        Fn::Select:
+        - '1'
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      CidrBlock:
+        Ref: PublicSubnet02Block
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-PublicSubnet02"
+      - Key: kubernetes.io/role/elb
+        Value: 1
+      - Key: unit
+        Value: phobosys-2
+
+  PrivateSubnet01:
+    Type: AWS::EC2::Subnet
+    Metadata:
+      Comment: Subnet 03
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - '2'
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      CidrBlock:
+        Ref: PrivateSubnet01Block
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value: !Sub "${AWS::StackName}-PrivateSubnet01"
+      - Key: kubernetes.io/role/internal-elb
+        Value: 1
+      - Key: unit
+        Value: phobosys-2
+
+  PublicSubnet01RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet01
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet02RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet02
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnet01RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet01
+      RouteTableId: !Ref PrivateRouteTable01
+
+#######################
+#        Roles        #
+#######################
+
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - eks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: Role to provide access to EKS
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      RoleName: !Sub '${AWS::StackName}-AmazonEKSClusterRole'
+
+  EksNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: Role to provide access to EKS
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      RoleName: !Sub '${AWS::StackName}-AmazonEKSNodeRole'
+
+#######################
+#         EKS         #
+#######################
+
+  ControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Cluster communication with worker nodes
+      VpcId: !Ref VPC
+
+  EKSControlPlane:
+    Type: "AWS::EKS::Cluster"
+    Properties:
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref ControlPlaneSecurityGroup
+        SubnetIds: 
+          - !Ref PublicSubnet01
+          - !Ref PublicSubnet02
+          - !Ref PrivateSubnet01
+      RoleArn: !GetAtt EksClusterRole.Arn
+      Version: !Ref KubernetesVersion
+      Name: !Sub '${AWS::StackName}-eks-cluster'
+
+  EksWorkerNodes:
+    DependsOn: EKSControlPlane
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Sub '${AWS::StackName}-eks-cluster'
+      InstanceTypes:
+        - !Ref EksInstanceType
+      NodegroupName: !Sub '${AWS::StackName}-eks-node-group'
+      NodeRole: !GetAtt EksNodeRole.Arn
+      ScalingConfig:
+        MinSize: 1
+        MaxSize: 4
+        DesiredSize: 1
+      Subnets:
+        - !Ref PrivateSubnet01
+
+#######################
+#       Outputs       #
+#######################
+
+Outputs:
+  SubnetIds:
+    Description: Subnets IDs in the VPC
+    Value: !Join [ ",", [ !Ref PublicSubnet01, !Ref PublicSubnet02, !Ref PrivateSubnet01 ] ]
+
+  SecurityGroups:
+    Description: Security group for the cluster control plane communication with worker nodes
+    Value: !Join [ ",", [ !Ref ControlPlaneSecurityGroup ] ]
+
+  VpcId:
+    Description: The VPC Id
+    Value: !Ref VPC
+
+  ClusterArn:
+    Value: !GetAtt EKSControlPlane.Arn
+
+  ClusterCAData:
+    Value: !GetAtt EKSControlPlane.CertificateAuthorityData
+
+  ClusterEndpoint:
+    Value: !GetAtt EKSControlPlane.Endpoint
+
+  ClusterName:
+    Value: !Ref EKSControlPlane
